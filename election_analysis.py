@@ -9,11 +9,8 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import pymongo
 import json
 import sys
-import descartes
 import numpy as np
 
-from shapely.geometry import MultiPolygon
-# from mpl_toolkits.basemap import Basemap
 from matplotlib import cm
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
@@ -44,10 +41,8 @@ def merge_vote_and_geography_2016(vote_file, shape_file):
 
     for item in shape_data.shapeRecords():
         geo_json = item.shape.__geo_interface__
-        # geo_json['geom_type'] = 'Polygon'
         fips = extract_fips(item.record)
         name = item.record[5]
-        # print fips, name
         try:
             county = [ct for ct in counties_json if ct['fips'] == fips][0]
             county['geo'] = geo_json
@@ -92,7 +87,6 @@ def draw_map(patches, colors, filename=None):
 
     fig = mpl.figure(figsize=(12, 8))
     ax = mpl.gca()
-    # fig, ax = mpl.subplots()
     cmap = cm.get_cmap('seismic')
 
     ax.axis('scaled')
