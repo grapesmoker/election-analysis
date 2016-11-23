@@ -10,6 +10,7 @@ import pymongo
 import json
 import sys
 import numpy as np
+import pandas as pd
 
 from matplotlib import cm
 from matplotlib.collections import PatchCollection
@@ -30,6 +31,10 @@ def extract_fips(record):
             except ValueError:
                 pass
 
+
+def make_polygon_patch(geo):
+    pass
+    
 def merge_vote_and_geography_2016(vote_file, shape_file):
 
     shape_data = shapefile.Reader(shape_file)
@@ -83,13 +88,13 @@ def merge_vote_and_geography_2012(vote_file, shape_file):
         except IndexError:
             print 'could not locate county {} {}'.format(fips, name)
 
-def draw_map(patches, colors, filename=None):
+def draw_map(patches, colors, filename=None, cmap=cm.get_cmap('seismic')):
 
     fig = mpl.figure(figsize=(12, 8))
     ax = mpl.gca()
-    cmap = cm.get_cmap('seismic')
+    ax.set_title(filename)
 
-    ax.axis('scaled')
+    ax.axis('equal')
     patch_collection = PatchCollection(patches, cmap=cmap)
     patch_collection.set_array(np.array(colors))
     ax.add_collection(patch_collection)
@@ -147,6 +152,96 @@ def plot_counties(year, output_file=None):
 
     draw_map(patches, colors, output_file)
 
+def plot_turnout(year, output_file=None):
+
+    patches = []
+    colors = []
+    cmap = cm.get_cmap('plasma')
+    
+    if year == 2016:
+        counties = counties_2016.find({})
+    elif year == 2012:
+        counties = counties_2012.find({})
+        
+    for county in counties:
+        geo = county['geo']
+        results = county['results']
+        pop = county['population']
+
+        turnout = sum([votes for _, votes in results.items()])
+        turnout_pct = turnout / pop
+
+        if geo['type'] == 'Polygon':
+            arr = np.array(geo['coordinates'][0])
+            polygon = Polygon(arr, True)
+            patches.append(polygon)
+            colors.append(turnout_pct)
+
+        elif geo['type'] == 'MultiPolygon':
+            arrays = [coords[0] for coords in geo['coordinates']]
+            polygons = [Polygon(arr, True) for arr in arrays]
+            patches.extend(polygons)
+            colors.extend([turnout_pct for i in range(len(polygons))])
+
+    draw_map(patches, colors, output_file, cmap=cmap)
+
+def plot_turnout_diff(output_file=None):
+
+    all_counties_2016 = [ct for ct in counties_2016.find({})]
+    all_counties_2012 = [ct for ct in counties_2012.find({})]
+
+    county_pairs = []
+    for ct_2012 in all_counties_2012:
+        for ct_2016 in all_counties_2016:
+            if ct_2016['fips'] == ct_2012['fips']:
+                county_pairs.append((ct_2016, ct_2012))
+    
+    patches = []
+    colors = []
+    cmap = cm.RdBu
+
+    for pair in county_pairs:
+        geo = pair[0]['geo']
+        results_2016 = pair[0]['results']
+        results_2012 = pair[1]['results']
+        population_2016 = pair[0]['population']
+        population_2012 = pair[1]['population']
+
+        turnout_2016 = sum([votes for _, votes in results_2016.items()])
+        turnout_pct_2016 = turnout_2016 / population_2016
+
+        turnout_2012 = sum([votes for _, votes in results_2012.items()])
+        turnout_pct_2012 = turnout_2012 / population_2012
+        
+        turnout_diff = turnout_pct_2016 - turnout_pct_2012
+
+        if geo['type'] == 'Polygon':
+            arr = np.array(geo['coordinates'][0])
+            polygon = Polygon(arr, True)
+            patches.append(polygon)
+            colors.append(turnout_diff)
+
+        elif geo['type'] == 'MultiPolygon':
+            arrays = [coords[0] for coords in geo['coordinates']]
+            polygons = [Polygon(arr, True) for arr in arrays]
+            patches.extend(polygons)
+            colors.extend([turnout_diff for i in range(len(polygons))])
+
+    draw_map(patches, colors, output_file, cmap=cmap)
+
+
+    
+def add_population_data(pop_data_file):
+
+    df = pd.read_csv(pop_data_file, dtype=str)
+
+    for index, row in df.iterrows():
+        fips = row['STATE'] + row['COUNTY']
+        pop_2015 = int(row['POPESTIMATE2015'])
+        pop_2012 = int(row['POPESTIMATE2012'])
+        counties_2012.update_one({'fips': fips}, {'$set': {'population': pop_2012}})
+        counties_2016.update_one({'fips': fips}, {'$set': {'population': pop_2015}})
+
 def plot_differentials(output_file=None):
 
     all_counties_2016 = [ct for ct in counties_2016.find({})]
@@ -160,8 +255,6 @@ def plot_differentials(output_file=None):
     
     patches = []
     colors = []
-
-    print len(county_pairs)
     
     for pair in county_pairs:
         geo = pair[0]['geo']
@@ -202,6 +295,122 @@ def plot_differentials(output_file=None):
             colors.extend([r_diff for i in range(len(polygons))])
 
     draw_map(patches, colors, output_file)
+
+def plot_dem_diff_hist(output_file=None):
+
+    all_counties_2016 = [ct for ct in counties_2016.find({})]
+    all_counties_2012 = [ct for ct in counties_2012.find({})]
+
+    county_pairs = []
+    for ct_2012 in all_counties_2012:
+        for ct_2016 in all_counties_2016:
+            if ct_2016['fips'] == ct_2012['fips']:
+                county_pairs.append((ct_2016, ct_2012))
+
+    diffs = []
+
+    for pair in county_pairs:
+        
+        results_2016 = pair[0]['results']
+        results_2012 = pair[1]['results']
+
+        clinton_2016 = results_2016.get('clintonh', 0)
+        trump_2016 = results_2016.get('trumpd', 0)
+        johnson_2016 = results_2016.get('johnsong', 0)
+        stein_2016 = results_2016.get('steinj', 0)
+
+        total_2016 = sum([clinton_2016, trump_2016, johnson_2016, stein_2016])
+        d_pct_2016 = 100 * clinton_2016 / total_2016
+        r_pct_2016 = 100 * trump_2016 / total_2016
+
+        obama_2012 = results_2012.get('Obama', 0)
+        romney_2012 = results_2012.get('Romney', 0)
+        johnson_2012 = results_2012.get('Johnson', 0)
+        stein_2012 = results_2012.get('Stein', 0)
+
+        total_2012 = sum([obama_2012, romney_2012, johnson_2012, stein_2012])
+        d_pct_2012 = 100 * obama_2012 / total_2012
+        r_pct_2012 = 100 * romney_2012 / total_2012
+
+        d_diff = d_pct_2016 - d_pct_2012
+        r_diff = r_pct_2016 - r_pct_2012
+
+        diffs.append(d_diff)
+
+    n, bins, patches = mpl.hist(diffs, 100)
+    mpl.xlabel('Percent Dem. vote difference between 2016 and 2012 (100 bins)')
+    mpl.ylabel('Number of counties with this difference')
+    if output_file is not None:
+        mpl.savefig(output_file)
+    else:
+        mpl.show()
+
+def plot_turnout_vs_dem_diff(output_file=None):
+
+    all_counties_2016 = [ct for ct in counties_2016.find({})]
+    all_counties_2012 = [ct for ct in counties_2012.find({})]
+
+    county_pairs = []
+    for ct_2012 in all_counties_2012:
+        for ct_2016 in all_counties_2016:
+            if ct_2016['fips'] == ct_2012['fips']:
+                county_pairs.append((ct_2016, ct_2012))
+
+    dem_diffs = []
+    turnout_diffs = []
+    
+    for pair in county_pairs:
+        
+        results_2016 = pair[0]['results']
+        results_2012 = pair[1]['results']
+
+        clinton_2016 = results_2016.get('clintonh', 0)
+        trump_2016 = results_2016.get('trumpd', 0)
+        johnson_2016 = results_2016.get('johnsong', 0)
+        stein_2016 = results_2016.get('steinj', 0)
+
+        total_2016 = sum([clinton_2016, trump_2016, johnson_2016, stein_2016])
+        d_pct_2016 = 100 * clinton_2016 / total_2016
+        r_pct_2016 = 100 * trump_2016 / total_2016
+
+        obama_2012 = results_2012.get('Obama', 0)
+        romney_2012 = results_2012.get('Romney', 0)
+        johnson_2012 = results_2012.get('Johnson', 0)
+        stein_2012 = results_2012.get('Stein', 0)
+
+        total_2012 = sum([obama_2012, romney_2012, johnson_2012, stein_2012])
+        d_pct_2012 = 100 * obama_2012 / total_2012
+        r_pct_2012 = 100 * romney_2012 / total_2012
+
+        d_diff = d_pct_2016 - d_pct_2012
+        r_diff = r_pct_2016 - r_pct_2012
+
+        dem_diffs.append(d_diff)
+
+        population_2016 = pair[0]['population']
+        population_2012 = pair[1]['population']
+
+        turnout_2016 = sum([votes for _, votes in results_2016.items()])
+        turnout_pct_2016 = turnout_2016 / population_2016
+
+        turnout_2012 = sum([votes for _, votes in results_2012.items()])
+        turnout_pct_2012 = turnout_2012 / population_2012
+        
+        turnout_diff = turnout_pct_2016 - turnout_pct_2012
+
+        turnout_diffs.append(turnout_diff)
+
+        if turnout_diff > 0.3 and d_diff < 0:
+            print pair[0]['name'], pair[0]['fips']
+
+    mpl.plot(turnout_diffs, dem_diffs, 'bo')
+    mpl.xlabel('Turnout difference (percent) between 2016 and 2012')
+    mpl.ylabel('Democratic vote difference (percent) between 2016 and 2012')
+    if output_file is not None:
+        mpl.savefig(output_file)
+    else:
+        mpl.show()
+        
     
 if __name__ == '__main__':
 
@@ -209,6 +418,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--operation', type=str)
     parser.add_argument('-v', '--vote-file', type=str, nargs='?')
     parser.add_argument('-s', '--shape-file', type=str, nargs='?')
+    parser.add_argument('-pf', '--pop-file', type=str, nargs='?')
     parser.add_argument('-y', '--year', type=int, nargs='?')
     parser.add_argument('-of', '--output-file', type=str, nargs='?')
     
@@ -224,3 +434,13 @@ if __name__ == '__main__':
         plot_counties(args.year, args.output_file)
     elif args.operation == 'plot-diff':
         plot_differentials(args.output_file)
+    elif args.operation == 'merge-population':
+        add_population_data(args.pop_file)
+    elif args.operation == 'plot-turnout':
+        plot_turnout(args.year, args.output_file)
+    elif args.operation == 'plot-turnout-diff':
+        plot_turnout_diff(args.output_file)
+    elif args.operation == 'plot-dem-hist':
+        plot_dem_diff_hist(args.output_file)
+    elif args.operation == 'plot-turnout-vs-dem-diff':
+        plot_turnout_vs_dem_diff(args.output_file)
