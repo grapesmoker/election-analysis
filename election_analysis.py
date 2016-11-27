@@ -11,10 +11,13 @@ import json
 import sys
 import numpy as np
 import pandas as pd
+import cartopy.crs as ccrs
+import shapely
 
 from matplotlib import cm
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
+from matplotlib.colors import Normalize
 
 client = pymongo.MongoClient()
 db = client.election
@@ -108,6 +111,27 @@ def draw_map(patches, colors, filename=None, cmap=cm.get_cmap('seismic')):
     else:
         mpl.show()
 
+def draw_cartopy_map(counties, colors, names, filname=None, cmap=cm.get_cmap('seismic')):
+
+    #norm = Normalize(vmin=0.0, vmax=100.0)
+    #norms = map(norm, colors)
+    #rgb_colors = map(cmap, norms)
+
+    fig, ax = mpl.subplots(figsize=(12, 8),
+                           subplot_kw=dict(projection=ccrs.LambertCylindrical()))
+
+    i = 0
+    for name, cty, col in zip(names, counties, colors):
+        ax.add_geometries([cty], ccrs.LambertCylindrical(), facecolor=col)
+        if name == 'San Diego':
+            print name, col, colors[i]
+        i += 1
+        
+    ax.set_xlim(-125, -65)
+    ax.set_ylim(24, 50)
+
+    mpl.show()
+
 def plot_counties(year, output_file=None):
 
     if year == 2016:
@@ -117,10 +141,16 @@ def plot_counties(year, output_file=None):
         
     patches = []
     colors = []
+    geometries = []
+    names = []
+    rgb_colors = []
+    cmap = cm.get_cmap('seismic')
     
     for county in all_counties:
         geo = county['geo']
+        geometries.append(shapely.geometry.shape(geo))
         results = county['results']
+        names.append(county['name'])
         if year == 2016:
             clinton = results.get('clintonh', 0)
             trump = results.get('trumpd', 0)
@@ -150,6 +180,12 @@ def plot_counties(year, output_file=None):
             patches.extend(polygons)
             colors.extend([r_pct for i in range(len(polygons))])
 
+        rgb_colors.append(cmap(r_pct / 100.0))
+
+        if county['name'] == 'San Diego':
+            print r_pct, cm.get_cmap('seismic')(r_pct / 100.0)
+
+    draw_cartopy_map(geometries, rgb_colors, names)
     draw_map(patches, colors, output_file)
 
 def plot_turnout(year, output_file=None):
